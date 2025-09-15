@@ -86,7 +86,8 @@ print_check_help (
   printf ("It should match the data provided when the DB / DBX is signed and will be used.\n");
   printf ("e.x. CheckDb.exe DBXUpdate.bin KEK.bin dbx d719b2cb-3d3a-4596-a3bc-dad00e67656f 0x67\n\n");
 
-  printf ("Typical guid used for SecureBoot variables:\n");
+  printf ("Typical guids used for SecureBoot variables:\n");
+  printf ("gEfiGlobalVariableGuid       : 8be4df61-93ca-11d2-aa0d-00e098032b8c\n\n");
   printf ("gEfiImageSecurityDatabaseGuid: d719b2cb-3d3a-4596-a3bc-dad00e67656f\n\n");
 
   printf ("Typical attributes used for SecureBoot variables:\n");
@@ -278,6 +279,24 @@ check_work (
     cert_list = (EFI_SIGNATURE_LIST *)((UINT8 *)cert_list + cert_list->SignatureListSize);
   }
 
+  printf("Treat entire file as a certificate...\n");
+  trusted_cert      = kek_buf;
+  trusted_cert_size = kek_size;
+  verify_result     = Pkcs7Verify (
+    db_cert_data,
+    db_cert_data_size,
+    trusted_cert,
+    trusted_cert_size,
+    hashed_data,
+    hashed_data_size
+  );
+  if (verify_result) {
+    err = 0;
+    printf ("Verify passed with certificate: ");
+    print_x509_info (trusted_cert, trusted_cert_size);
+    goto Exit;
+  }
+
   err = 2;
   printf ("Not able to find a matching cert\n");
 
@@ -409,6 +428,8 @@ show_main(
   UINTN trusted_cert_size = 0;
   EFI_CERT_DATA *cert_data;
   UINTN idx;
+  EFI_SIGNATURE_LIST *sig_list;
+      FILE     *stream = NULL;
 
   if (argc != 1) {
     print_show_help();
@@ -427,6 +448,7 @@ show_main(
   }
   var_auth = (EFI_VARIABLE_AUTHENTICATION_2*)db_buf;
 
+  if (CompareGuid(&var_auth->AuthInfo.CertType, &gEfiCertPkcs7Guid)) {
   printf("Authentication header time stamp: %04d-%02d-%02d %02d:%02d:%02d\n",
     var_auth->TimeStamp.Year,
     var_auth->TimeStamp.Month,
@@ -455,6 +477,18 @@ show_main(
     printf("Signer stack %lld: ", idx);
     print_x509_info((UINT8*)&cert_data->CertDataBuffer[0], cert_data->CertDataLength);
     cert_data = (EFI_CERT_DATA*)((UINT8*)cert_data + cert_data->CertDataLength + sizeof(EFI_CERT_DATA) - sizeof(cert_data->CertDataBuffer[0]));
+  }
+    sig_list = (EFI_SIGNATURE_LIST*)((UINT8*)var_auth + sizeof(EFI_TIME) + var_auth->AuthInfo.Hdr.dwLength);
+  } else {
+    printf("No valid auth header, treat the input file as pure EFI_SIGNATURE_LIST\n");
+    sig_list = (EFI_SIGNATURE_LIST*)db_buf;
+  }
+
+  err = fopen_s (&stream, "content", "wb");
+  if (err) {
+    printf ("Not able to write %s\n", "Content");
+  } else {
+    fwrite (sig_list, sig_list->SignatureListSize, 1, stream);
   }
 
 Exit:
